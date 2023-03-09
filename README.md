@@ -3,5 +3,5 @@
 ## A Smart Autofocus System with Artificially Intelligent Technology.
 
 
-Master of Engineering in Electronic and Computer Engineering
-Masters Project
+Masters Project in relation to my Masters of Engineering in Electronic and Computer Engineering at University of Limerick
+
