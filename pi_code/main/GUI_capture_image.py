@@ -1,25 +1,40 @@
 # ---------------------------------------------------------------
-# Script name : GUI_select_image.py
+# Script name : GUI_capture_image.py
 # Created by  : Enda Stockwell
 # Adapted from : www.tensorflow.org and www.arducam.com/
 # ---------------------------------------------------------------
 # Description:
-# TKinter GUI built to predict and measure contrast from an image
-#   The image is to be uploaded locally from filesystem
+# TKinter GUI built to predict and measure contrast from an image.
+#   The image is to be captured from a live camera stream.
+#       Using Picamera on raspberry Pi 4.
 #
-# Loads and predicts from a tensorflow lite model
+# Loads and predicts from a tensorflow lite model.
 # ---------------------------------------------------------------
+
 import tkinter as tk
-from tkinter import filedialog
 from PIL import Image, ImageTk
 import cv2
 import numpy as np
 import tflite_runtime as tf
 from tflite_runtime.interpreter import Interpreter 
+import os
+import sys
+import numpy as np
+import smbus
+
+# Load Picamera and bus for i2c control
+bus = smbus.SMBus(0)
+try:
+    import picamera
+    from picamera.array import PiRGBArray
+except:
+    print("ERROR: Failed to connect to PiCamera")
+    sys.exit(0)
 
 # Load model
 model_path = "converted_model.tflite"
 
+# Load the model
 interpreter = Interpreter(model_path)
 print("Model Loaded Successfully.")
 
@@ -31,8 +46,62 @@ print("Image Shape (", width, ",", height, ")")
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-
 class_names = ['blurry', 'focussed']
+
+
+# Start camera preview window
+camera = picamera.PiCamera()
+camera.start_preview(fullscreen=False, window = (1240, 0, 640, 480))
+camera.resolution = (640, 480)
+camera.framerate= 24
+
+rawCapture = PiRGBArray(camera, size=camera.resolution)
+
+# Distance between each focal distance step
+focal_step = 50
+
+# Function to step focal distance UP
+def up_focus():
+    # Get step value
+    global focal_step
+    # Print details to user
+    print ('UP', focal_step)
+
+    # If not at maximum
+    if focal_step < 1000:
+        # Step by 50
+        focal_step += 50
+    else:
+        # Else at maximum, dont step
+        focal_step = focal_step
+    
+    # Write data to I2c to control the Arducam focus motor
+    value = (focal_step<<4) & 0x3ff0
+    dat1 = (value>>8)&0x3f
+    dat2 = value & 0xf0
+    os.system("i2cset -y 0 0x0c %d %d" % (dat1,dat2))
+        
+
+# Function to step focal distance DOWN
+def down_focus():
+    # Get step value
+    global focal_step
+    # Print details to user
+    print ('DOWN', focal_step)
+    
+    # If at minimum
+    if focal_step <50 :
+        # Dont step
+        focal_step = focal_step
+    else:
+        # Else step
+        focal_step -= 50
+    
+    # Write data to I2c to control the Arducam focus motor
+    value = (focal_step<<4) & 0x3ff0
+    dat1 = (value>>8)&0x3f
+    dat2 = value & 0xf0
+    os.system("i2cset -y 0 0x0c %d %d" % (dat1,dat2))
 
 
 # Sobel filter
@@ -88,12 +157,12 @@ def calculate_contrast(image):
 
 # Define function to update the image
 def update_image():
-    
+
     # Apply filters if selected
     if sobel_var.get():
         # Convert to greyscale
         img_grey =  cv2.cvtColor(orig_img, cv2.COLOR_RGB2GRAY)
-        # Apply sobel
+        # Apply Sobel
         img = apply_sobel(img_grey)
         # Extrapolate a 3rd chanel needed for AI prediction
         pred_img = np.repeat(img[..., np.newaxis], 3, axis=-1)
@@ -103,7 +172,7 @@ def update_image():
     elif canny_var.get():
         # Convert to greyscale
         img_grey =  cv2.cvtColor(orig_img, cv2.COLOR_RGB2GRAY)
-        # Apply canny
+        # Apply Canny
         img = apply_canny(img_grey)
         # Extrapolate a 3rd chanel needed for AI prediction
         pred_img = np.repeat(img[..., np.newaxis], 3, axis=-1)
@@ -113,7 +182,7 @@ def update_image():
     elif laplacian_var.get():
         # Convert to greyscale
         img_grey =  cv2.cvtColor(orig_img, cv2.COLOR_RGB2GRAY)
-        # Apply canny
+        # Apply Laplacian
         img = apply_laplacian(img_grey)
         # Extrapolate a 3rd chanel needed for AI prediction
         pred_img = np.repeat(img[..., np.newaxis], 3, axis=-1)
@@ -121,8 +190,8 @@ def update_image():
         img_shifted = img + abs(np.min(img))
         # Calculate contrast
         calculate_contrast(img_shifted)
-    
-    # No filter selected    
+
+    # No filter selected           
     else:
         # Convert to greyscale
         img_grey =  cv2.cvtColor(orig_img, cv2.COLOR_RGB2GRAY)
@@ -131,18 +200,21 @@ def update_image():
         # Calculate contrast
         calculate_contrast(img_grey)
     
+    
     # Classify/predict on the input image
     classify_image(interpreter, pred_img)
-    
+
     # Display the image in the GUI
     img = Image.fromarray(img)
     img_tk = ImageTk.PhotoImage(img)
     img_label.configure(image=img_tk)
     img_label.image = img_tk
 
+
 # Define softmax function as tflite does not include 
 def softmax(x):
     return(np.exp(x)/np.exp(x).sum())
+
 
 # Classify image function
 def classify_image(interpreter, image, top_k=1):
@@ -166,17 +238,21 @@ def classify_image(interpreter, image, top_k=1):
     classed_name = class_names[pred_label]
     result_label.config(text=f"AI Prediction: \nThis image most likely belongs to class " + str(classed_name) + " with a %.2f" % (100 * np.max(output_probs)) + " percent confidence.", font=('Times New Roman', 15))
 
-# Define function to select an image and update the GUI
-def select_image():
-    # Open a file dialog to select an image
-    file_path = filedialog.askopenfilename()
 
-    # Load and resize  image
-    img = cv2.imread(file_path)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+# Define function to capture an image and update the GUI
+def capture_image():
+
+    # Capture using Picamera
+    camera.capture(rawCapture, format="rgb")
+    # Convert image to array
+    img = rawCapture.array
+    # Truncate - needed to clear stream for next frame 
+    rawCapture.truncate(0)
+
+    # Load and resize the image
     img = cv2.resize(img, (256, 256))
 
-    # Store original image
+    # Store the original image
     global orig_img
     orig_img = img.copy()
 
@@ -185,7 +261,7 @@ def select_image():
     
     #Classify/predict on image
     classify_image(interpreter, orig_img)
-    
+
     # Display the image in the GUI
     img_array = Image.fromarray(orig_img)
     img_tk = ImageTk.PhotoImage(img_array)
@@ -194,23 +270,40 @@ def select_image():
 
 
 
-
 # Create the GUI
 root = tk.Tk()
 root.title('Autofocus Intelligence')
 root.geometry("800x600")
 
-# Create a frame for the select image button
-sel_button_frame = tk.Frame(root)
-sel_button_frame.pack()
+# Create a frame for the capture image button
+cap_button_frame = tk.Frame(root)
+cap_button_frame.pack()
 
 # Create a frame for the filter buttons
 button_frame = tk.Frame(root)
 button_frame.pack()
 
-# Create a button to select an image
-select_button = tk.Button(sel_button_frame, text="Select Image", command=select_image, font=('Arial', 15, 'italic'))
-select_button.pack(side="left", padx=5, pady=5)
+# Create a frame for the up button
+up_button_frame = tk.Frame(root)
+up_button_frame.pack()
+
+up_button = tk.Button(up_button_frame, text="UP", command=up_focus, font=('Arial', 15, 'bold'))
+up_button.pack(side="left", padx=5, pady=5)
+
+# Create a frame for the down button
+down_button_frame = tk.Frame(root)
+down_button_frame.pack()
+
+down_button = tk.Button(down_button_frame, text="DOWN",  command=down_focus, font=('Arial', 15, 'bold'))
+down_button.pack(side="left", padx=5, pady=5)
+
+# Create a button to capture an image
+capture_button = tk.Button(cap_button_frame, text="Capture Image", command=capture_image, font=('Arial', 15, 'italic'))
+capture_button.pack(side="left", padx=5, pady=5)
+
+# Create a label for the image
+img_label = tk.Label(root)
+img_label.pack()
 
 # Create button and variable for applying Sobel
 sobel_var = tk.BooleanVar(value=False)
@@ -227,17 +320,16 @@ laplacian_var = tk.BooleanVar(value=False)
 laplacian_button = tk.Checkbutton(button_frame, text="Laplacian Filter", variable=laplacian_var, command=update_image, font=('Arial', 15, 'bold'))
 laplacian_button.pack(side="left", padx=5, pady=5)
 
-# Create a label for the image
-img_label = tk.Label(root)
-img_label.pack()
-
-# Create a label to display the result
+# Create a label to display the AI predicted result
 result_label = tk.Label(root, text='AI Predicted Sharpness Score: ',  font=('Times New Roman', 15))
 result_label.pack()
 
-# Create a label to display the result
+# Create a label to display the Contrast measurement result
 result_2_label = tk.Label(root, text='Contrast Measurement: ', font=('Times New Roman', 15))
 result_2_label.pack()
 
+
+
 # Start the GUI
 root.mainloop()
+    
