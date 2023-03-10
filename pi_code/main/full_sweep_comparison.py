@@ -163,12 +163,15 @@ if __name__ == "__main__":
 		# Predict image score
 		val = calculation(camera)
 		
-		# Append recorded contrast to list
+    	# Check if image was predicted as sharp or blurry and store accordingly
 		if classname == "blurry":
-            # Blurry images to produce negative confidence (score) 
+        	# This score would normally be between [50, 100]
+        	#We multiply it by -1 and subtract 50 set it between [0,-50]
 			val_list_ai.append((score*-1)+50)
 		else:
-			val_list_ai.append(score)
+            # This score would normally be between [50, 100]
+        	# We subtract 50 set it between [0,50]
+			val_list_ai.append(score-50)
                         
 		# Store results in lists
 		val_list_cont.append(val)
